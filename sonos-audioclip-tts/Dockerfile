@@ -3,7 +3,7 @@ FROM $BUILD_FROM
 
 ENV LANG C.UTF-8
 
-RUN apk add nodejs nodejs-npm
+RUN apk add --update nodejs npm
 
 # Copy files for add-on
 
