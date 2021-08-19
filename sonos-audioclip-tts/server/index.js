@@ -328,7 +328,7 @@ app.get('/api/speakText', async (req, res) => {
     });
     
     j = await speechRes.json()
-    consolelog(j)
+    console.log(j)
     speechUrl = j.url
   }
   catch (err) {
