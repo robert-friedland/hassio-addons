@@ -326,9 +326,10 @@ app.get('/api/speakText', async (req, res) => {
      }),
      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.HASSIO_BEARER_TOKEN}` }
     });
-    console.log(JSON.stringify(speechRes.json()))
-   
-    speechUrl = speechRes.json().url
+    
+    j = await speechRes.json()
+    consolelog(j)
+    speechUrl = j.url
   }
   catch (err) {
     console.log(err)
