@@ -302,6 +302,8 @@ app.get('/api/speakText', async (req, res) => {
   const text = req.query.text;
   const volume = req.query.volume;
   const playerId = req.query.playerId;
+  const language = req.query.language || 'en-US'
+  const gender = req.query.gender || 'female'
 
   const speakTextRes = res;
   speakTextRes.setHeader('Content-Type', 'application/json');
@@ -322,7 +324,11 @@ app.get('/api/speakText', async (req, res) => {
      method: 'POST',
      body: JSON.stringify({
       platform: 'cloud',
-      message: text
+      message: text,
+      language: language,
+      options: {
+        gender: gender
+      }
      }),
      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.HASSIO_BEARER_TOKEN}` }
     });
