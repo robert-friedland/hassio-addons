@@ -317,7 +317,17 @@ app.get('/api/speakText', async (req, res) => {
   let speechUrl;
 
   try { // Let's make a call to the google tts api and get the url for our TTS file
-    speechUrl = await googleTTS(text, config.GOOGLE_TTS_LANGUAGE, 1);
+    //speechUrl = await googleTTS(text, config.GOOGLE_TTS_LANGUAGE, 1);
+    speechRes = await fetch(`${config.HASSIO_BASE_URL}/api/tts_get_url`, {
+     method: 'POST',
+     body: JSON.stringify({
+      platform: 'cloud',
+      message: text
+     }),
+     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.HASSIO_BEARER_TOKEN}` }
+    });
+   
+    speechUrl = speechRes.json().url
   }
   catch (err) {
     speakTextRes.send(JSON.stringify({'success':false,error: err.stack}));
