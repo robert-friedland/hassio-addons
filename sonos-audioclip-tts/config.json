@@ -11,12 +11,14 @@
     "SONOS_CLIENT_ID":"",
     "SONOS_CLIENT_SECRET":"",
     "GOOGLE_TTS_LANGUAGE":"en-US",
+    "HASSIO_BASE_URL": "",
     "HASSIO_BEARER_TOKEN": ""
   },
   "schema": {
     "SONOS_CLIENT_ID": "str",
     "SONOS_CLIENT_SECRET": "str",
     "GOOGLE_TTS_LANGUAGE": "str",
+    "HASSIO_BASE_URL": "str",
     "HASSIO_BEARER_TOKEN": "str"
   },
   "ports": {
