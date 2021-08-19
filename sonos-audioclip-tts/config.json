@@ -1,6 +1,6 @@
 {
   "name": "SONOS AudioClip TTS",
-  "version": "2.0.6",
+  "version": "2.0.7",
   "slug": "sonos_audioclip_tts",
   "description": "Implements the best current tts solution on SONOS using built in audioClip support.",
   "url":"https://github.com/robert-friedland/hassio-addons/tree/master/sonos-audioclip-tts",
