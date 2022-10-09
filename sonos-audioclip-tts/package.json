@@ -1,6 +1,6 @@
 {
   "name": "sonos-audioclip-tts",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "dependencies": {
     "google-tts-api": "0.0.6",
