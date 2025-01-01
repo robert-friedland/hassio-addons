@@ -303,7 +303,7 @@ app.get('/api/speakText', async (req, res) => {
   const volume = req.query.volume;
   const playerId = req.query.playerId;
   const language = req.query.language || 'en-US'
-  const gender = req.query.gender || 'female'
+  const voice = req.query.voice
 
   const speakTextRes = res;
   speakTextRes.setHeader('Content-Type', 'application/json');
@@ -318,18 +318,22 @@ app.get('/api/speakText', async (req, res) => {
 
   let speechUrl;
 
-  try { // Let's make a call to the google tts api and get the url for our TTS file
-    //speechUrl = await googleTTS(text, config.GOOGLE_TTS_LANGUAGE, 1);
+  const body = {
+    platform: 'cloud',
+    message: text,
+    language: language
+  };
+
+  if (voice) {
+    body.options = {
+      voice: voice
+    }
+  }
+ 
+  try { 
     speechRes = await fetch(`${config.HASSIO_BASE_URL}/api/tts_get_url`, {
      method: 'POST',
-     body: JSON.stringify({
-      platform: 'cloud',
-      message: text,
-      language: language,
-      options: {
-        gender: gender
-      }
-     }),
+     body: JSON.stringify(body),
      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.HASSIO_BEARER_TOKEN}` }
     });
     
