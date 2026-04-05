@@ -70,27 +70,104 @@ const authorizationUri = oauth2.authorizationCode.authorizeURL({
 let token; // This'll hold our token, which we'll use in the Auth header on calls to the Sonos Control API
 let authRequired = false; // We'll use this to keep track of when auth is needed (first run, failed refresh, etc) and return that fact to the calling app so it can redirect
 
+// Mutex to prevent concurrent token refreshes (Sonos uses refresh token rotation)
+let refreshPromise = null;
+
+async function refreshToken() {
+  if (refreshPromise) return refreshPromise;
+  refreshPromise = (async () => {
+    try {
+      console.log("Refreshing token...");
+      token = await token.refresh();
+      await storage.setItem("token", token);
+      authRequired = false;
+      console.log("Token refreshed successfully.");
+    } catch (error) {
+      authRequired = true;
+      console.error("Error refreshing access token: ", error.message);
+      throw error;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+  return refreshPromise;
+}
+
 // This is a function we run when we first start the app. It gets the token from the local store, or sets authRequired if it's unable to
 async function getToken() {
   const currentToken = await storage.getItem("token");
   if (currentToken === undefined) {
+    console.log("No token found in storage. Auth required.");
     authRequired = true;
     return;
   }
   token = oauth2.accessToken.create(currentToken.token);
 
-  if (token.expired()) {
+  // simple-oauth2 v2.x expired() does not accept a buffer param; check manually
+  const expiresAt = new Date(token.token.expires_at).getTime();
+  const bufferMs = 300 * 1000; // 5 minutes
+  if (Date.now() >= expiresAt - bufferMs) {
     try {
-      token = await token.refresh();
-      await storage.setItem("token", token); // And save it to local storage to capture the new access token and expiry date
+      await refreshToken();
     } catch (error) {
-      authRequired = true;
-      console.error("Error refreshing access token: ", error.message);
+      // refreshToken already sets authRequired and logs
     }
   }
 }
 
-getToken();
+// sonosFetch: wraps fetch for Sonos API calls with 401 retry
+async function sonosFetch(url, options = {}) {
+  if (!token || !token.token || !token.token.access_token) {
+    authRequired = true;
+    return null;
+  }
+
+  const makeRequest = () => {
+    return fetch(url, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...options.headers,
+        Authorization: `Bearer ${token.token.access_token}`,
+      },
+    });
+  };
+
+  let response = await makeRequest();
+
+  if (response.status === 401) {
+    console.log("Sonos API returned 401. Attempting token refresh...");
+    try {
+      await refreshToken();
+    } catch (error) {
+      return response; // Return original 401
+    }
+    response = await makeRequest(); // Network errors propagate to caller's catch
+  }
+
+  return response;
+}
+
+// Load token and start server once ready
+getToken().then(() => {
+  // Proactively refresh token every 30 minutes to keep it alive during idle periods
+  setInterval(async () => {
+    if (!token || !token.token) return;
+    const expiresAt = new Date(token.token.expires_at).getTime();
+    const bufferMs = 1800 * 1000; // 30 minutes
+    if (Date.now() >= expiresAt - bufferMs) {
+      try {
+        await refreshToken();
+      } catch (error) {
+        // refreshToken already logs
+      }
+    }
+  }, 30 * 60 * 1000);
+
+  app.listen(8349, () =>
+    console.log("Express server is running on localhost:8349")
+  );
+});
 
 // Initial page redirecting to Sonos
 app.get("/auth", async (req, res) => {
@@ -127,25 +204,17 @@ app.get("/redirect", async (req, res) => {
 
 // This route handler returns the available households for the authenticated user
 app.get("/api/allClipCapableDevices", async (req, res) => {
-  await getToken();
   res.setHeader("Content-Type", "application/json");
-  if (authRequired) {
-    res.send(JSON.stringify({ success: false, authRequired: true }));
-    return;
-  }
   let hhResult;
 
   try {
-    hhResult = await fetch(
-      `https://api.ws.sonos.com/control/api/v1/households`,
-      {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token.token.access_token}`,
-        },
-      }
+    hhResult = await sonosFetch(
+      `https://api.ws.sonos.com/control/api/v1/households`
     );
+    if (!hhResult) {
+      res.send(JSON.stringify({ success: false, authRequired: true }));
+      return;
+    }
   } catch (err) {
     res.send(JSON.stringify({ success: false, error: err.stack }));
     return;
@@ -164,16 +233,13 @@ app.get("/api/allClipCapableDevices", async (req, res) => {
         allClipCapableDevices[household.id] = [];
         let groupsResult;
         try {
-          groupsResult = await fetch(
-            `https://api.ws.sonos.com/control/api/v1/households/${household.id}/groups`,
-            {
-              method: "GET",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${token.token.access_token}`,
-              },
-            }
+          groupsResult = await sonosFetch(
+            `https://api.ws.sonos.com/control/api/v1/households/${household.id}/groups`
           );
+          if (!groupsResult) {
+            res.send(JSON.stringify({ success: false, authRequired: true }));
+            return;
+          }
         } catch (err) {
           console.log(err);
           continue;
@@ -219,7 +285,6 @@ app.get("/api/allClipCapableDevices", async (req, res) => {
 });
 
 app.get("/api/speakText", async (req, res) => {
-  await getToken();
   const text = req.query.text;
   const volume = req.query.volume;
   const playerId = req.query.playerId;
@@ -228,9 +293,6 @@ app.get("/api/speakText", async (req, res) => {
 
   const speakTextRes = res;
   speakTextRes.setHeader("Content-Type", "application/json");
-  if (authRequired) {
-    res.send(JSON.stringify({ success: false, authRequired: true }));
-  }
 
   if (text == null || playerId == null) {
     // Return if either is null
@@ -286,17 +348,17 @@ app.get("/api/speakText", async (req, res) => {
 
   try {
     // And call the audioclip API, with the playerId in the url path, and the text in the JSON body
-    audioClipRes = await fetch(
+    audioClipRes = await sonosFetch(
       `https://api.ws.sonos.com/control/api/v1/players/${playerId}/audioClip`,
       {
         method: "POST",
         body: JSON.stringify(audioClipBody),
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token.token.access_token}`,
-        },
       }
     );
+    if (!audioClipRes) {
+      speakTextRes.send(JSON.stringify({ success: false, authRequired: true }));
+      return;
+    }
   } catch (err) {
     speakTextRes.send(JSON.stringify({ success: false, error: err.stack }));
     return;
@@ -321,16 +383,12 @@ app.get("/api/speakText", async (req, res) => {
 });
 
 app.get("/api/playClip", async (req, res) => {
-  await getToken();
   const streamUrl = req.query.streamUrl;
   const volume = req.query.volume;
   const playerId = req.query.playerId;
 
   const speakTextRes = res;
   speakTextRes.setHeader("Content-Type", "application/json");
-  if (authRequired) {
-    res.send(JSON.stringify({ success: false, authRequired: true }));
-  }
 
   if (streamUrl == null || playerId == null) {
     // Return if either is null
@@ -355,17 +413,17 @@ app.get("/api/playClip", async (req, res) => {
 
   try {
     // And call the audioclip API, with the playerId in the url path, and the text in the JSON body
-    audioClipRes = await fetch(
+    audioClipRes = await sonosFetch(
       `https://api.ws.sonos.com/control/api/v1/players/${playerId}/audioClip`,
       {
         method: "POST",
         body: JSON.stringify(body),
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token.token.access_token}`,
-        },
       }
     );
+    if (!audioClipRes) {
+      speakTextRes.send(JSON.stringify({ success: false, authRequired: true }));
+      return;
+    }
   } catch (err) {
     speakTextRes.send(JSON.stringify({ success: false, error: err.stack }));
     return;
@@ -389,6 +447,3 @@ app.get("/api/playClip", async (req, res) => {
   }
 });
 
-app.listen(8349, () =>
-  console.log("Express server is running on localhost:8349")
-);
